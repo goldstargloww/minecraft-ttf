@@ -179,7 +179,48 @@ def outline(mask: pygame.mask.Mask) -> list[tuple[int, int]]:
             break
     return result
 
-def vectorize(glyph: PIL.Image.Image, scale: int):
+def neighbor_connected(mask: pygame.mask.Mask) -> list[pygame.mask.Mask]:
+    w, h = mask.get_size()
+    pixels_checked = set()
+    result = []
+    for y in range(h):
+        for x in range(w):
+            pos = (x, y)
+            if pos not in pixels_checked:
+                if mask.get_at(pos) == 1:
+                    region = pygame.mask.Mask((w, h))
+                    pixel_queue = [pos]
+                    while len(pixel_queue) > 0:
+                        pixel = pixel_queue.pop()
+                        px, py = pixel
+                        if px < 0 or px >= w or py < 0 or py >= h or pixel in pixels_checked or mask.get_at(pixel) != 1:
+                            pixels_checked.add(pixel)
+                            continue
+                        pixels_checked.add(pixel)
+                        region.set_at(pixel, 1)
+                        pixel_queue.append((px - 1, py))
+                        pixel_queue.append((px + 1, py))
+                        pixel_queue.append((px, py - 1))
+                        pixel_queue.append((px, py + 1))
+                    result.append(region)
+                pixels_checked.add(pos)
+    return result 
+
+def separate_regions(mask: pygame.mask.Mask) -> tuple[list[pygame.mask.Mask], list[pygame.mask.Mask]]:
+    filled = mask.connected_components()
+    w, h = mask.get_size()
+    inverted = pygame.mask.Mask((w + 2, h + 2))
+    inverted.draw(mask, (1, 1))
+    inverted.invert()
+    big_unfilled = neighbor_connected(inverted)
+    unfilled = []
+    for big in big_unfilled[1:]:
+        fixed = pygame.mask.Mask((w, h))
+        fixed.draw(big, (-1, -1))
+        unfilled.append(fixed)
+    return (filled, unfilled)
+
+def vectorize(glyph: PIL.Image.Image, scale: int) -> fontTools.pens.t2CharStringPen.T2CharStringPen:
     pen = fontTools.pens.t2CharStringPen.T2CharStringPen(glyph.width * scale, None)
     def move_pen(point: tuple[int, int]):
         x, y = point
@@ -190,16 +231,23 @@ def vectorize(glyph: PIL.Image.Image, scale: int):
     glyph = glyph.convert('RGBA')
     surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
     mask = pygame.mask.from_surface(surface)
-    regions = mask.connected_components()
-    for region in regions:
-        outline_points = outline(region)
-        move_pen(outline_points[0])
-        for point in outline_points:
-            line_pen(point)
-        pen.closePath()
-    if len(regions) == 0:
+    filled, empty = separate_regions(mask)
+    if len(filled) == 0:
         move_pen((0, 0))
         pen.closePath()
+    else:
+        for region in filled:
+            outline_points = outline(region)
+            move_pen(outline_points[0])
+            for point in outline_points[1:]:
+                line_pen(point)
+            pen.closePath()
+        for region in empty:
+            outline_points = list(reversed(outline(region)))
+            move_pen(outline_points[0])
+            for point in outline_points[1:]:
+                line_pen(point)
+            pen.closePath()
     return pen
 
 def get_latest() -> dict | None:
