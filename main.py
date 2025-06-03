@@ -4,7 +4,7 @@ import os
 import json
 import zipfile
 import unicodedata
-import pygame.mask
+import pygame
 import PIL.Image
 import fontTools.fontBuilder
 import fontTools.pens.t2CharStringPen
@@ -120,52 +120,64 @@ def convert_font(name, data: dict, jar: zipfile.ZipFile):
     font.setupPost()
     font.save(f'out/{name}.otf')
 
-def find_start(glyph: PIL.Image.Image) -> tuple[int, int] | None:
-    pixels = glyph.load()
-    for py in reversed(range(glyph.height)):
-        for px in range(glyph.width):
-            pixel = pixels[px, py]
-            if pixel == 1:
-                return (px, py)
-    return None
+def start_point(mask: pygame.mask.Mask) -> tuple[int, int]:
+    w, h = mask.get_size()
+    for y in range(h):
+        for x in range(w):
+            if mask.get_at((x, y)) == 1:
+                return (x, y)
+    raise ValueError(mask)
 
-def rotate(facing: str, turn: str) -> str:
-    match turn:
-        case 'forward':
-            return facing
-        case 'backward':
-            return {'up':'down','down':'up','left':'right','right':'left'}[facing]
-        case 'left':
-            return {'up':'left','down':'right','left':'down','right':'up'}[facing]
-        case 'right':
-            return {'up':'right','down':'left','left':'up','right':'down'}[facing]
-    raise ValueError(turn)
-
-def step(coords: tuple[int, int], direction: str) -> tuple[int, int]:
-    x, y = coords
-    match direction:
-        case 'up':
-            return (x, y - 1)
-        case 'down':
-            return (x, y + 1)
-        case 'left':
-            return (x - 1, y)
-        case 'right':
-            return (x + 1, y)
-    raise ValueError(direction)
-
-def trace(start: tuple[int, int], facing: str, path: list[str]) -> tuple[tuple[int, int], str]:
-    for entry in path:
-        facing = rotate(facing, entry)
-        start = step(start, facing)
-    return (start, facing)
-
-def pixel_filled(glyph: PIL.Image.Image, point: tuple[int, int]) -> bool:
+def is_set(mask: pygame.mask.Mask, point: tuple[int, int]) -> bool:
     x, y = point
-    if x < 0 or y < 0 or x >= glyph.width or y >= glyph.height:
+    if x < 0 or y < 0:
         return False
-    pixels = glyph.load()
-    return pixels[x, y] == 1
+    w, h = mask.get_size()
+    if x >= w or y >= h:
+        return False
+    return mask.get_at(point) == 1
+
+def outline(mask: pygame.mask.Mask) -> list[tuple[int, int]]:
+    start = start_point(mask)
+    facing = 'up'
+    pos = start
+    result = []
+    while True:
+        x, y = pos
+        top_left = is_set(mask, (x - 1, y - 1))
+        top_right = is_set(mask, (x, y - 1))
+        bottom_left = is_set(mask, (x - 1, y))
+        bottom_right = is_set(mask, (x, y))
+        if top_left and bottom_right and not top_right and not bottom_left:
+            if facing == 'up':
+                facing = 'left'
+                pos = (x - 1, y)
+            else:
+                facing = 'right'
+                pos = (x + 1, y)
+        elif top_right and bottom_left and not top_left and not bottom_right:
+            if facing == 'right':
+                facing = 'up'
+                pos = (x, y - 1)
+            else:
+                facing = 'down'
+                pos = (x, y + 1)
+        elif top_left and not bottom_left:
+            facing = 'left'
+            pos = (x - 1, y)
+        elif top_right and not top_left:
+            facing = 'up'
+            pos = (x, y - 1)
+        elif bottom_right and not top_right:
+            facing = 'right'
+            pos = (x + 1, y)
+        elif bottom_left and not bottom_right:
+            facing = 'down'
+            pos = (x, y + 1)
+        result.append(pos)
+        if pos == start:
+            break
+    return result
 
 def vectorize(glyph: PIL.Image.Image, scale: int):
     pen = fontTools.pens.t2CharStringPen.T2CharStringPen(glyph.width * scale, None)
@@ -175,41 +187,17 @@ def vectorize(glyph: PIL.Image.Image, scale: int):
     def line_pen(point: tuple[int, int]):
         x, y = point
         pen.lineTo((x * scale, (glyph.height - y) * scale))
-    start = find_start(glyph)
-    if start is not None:
-        pos = start
-        facing = 'up'
-        spins = 0
-        move_pen(pos)
-        while True:
-            (p1, p1f) = trace(pos, facing, ['forward', 'left'])
-            (p2, p2f) = trace(pos, facing, ['forward'])
-            (p3, p3f) = trace(pos, facing, ['right', 'left'])
-            if pixel_filled(glyph, p1):
-                line_pen(p2)
-                line_pen(p1)
-                pos = p1
-                facing = p1f
-                spins = 0
-            elif pixel_filled(glyph, p2):
-                line_pen(p2)
-                pos = p2
-                facing = p2f
-                spins = 0
-            elif pixel_filled(glyph, p3):
-                (rightward, _) = trace(pos, facing, ['right'])
-                line_pen(rightward)
-                line_pen(p3)
-                pos = p3
-                facing = p3f
-                spins = 0
-            else:
-                facing = rotate(facing, 'right')
-                spins += 1
-            if (pos == start and spins == 0) or spins > 3:
-                break
+    glyph = glyph.convert('RGBA')
+    surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
+    mask = pygame.mask.from_surface(surface)
+    regions = mask.connected_components()
+    for region in regions:
+        outline_points = outline(region)
+        move_pen(outline_points[0])
+        for point in outline_points:
+            line_pen(point)
         pen.closePath()
-    else:
+    if len(regions) == 0:
         move_pen((0, 0))
         pen.closePath()
     return pen
