@@ -7,8 +7,8 @@ import unicodedata
 import pygame
 import PIL.Image
 import fontTools.fontBuilder
-import fontTools.pens.t2CharStringPen
-import fontTools.misc.psCharStrings
+import fontTools.pens.ttGlyphPen
+import fontTools.ttLib.tables._g_l_y_f
 
 
 def main():
@@ -62,10 +62,10 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
         index += 1
     print(name)
     scale = 2
-    path = fontTools.pens.t2CharStringPen.T2CharStringPen(0, None)
+    path = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     path.moveTo((0, 0))
     path.closePath()
-    empty_path = path.getCharString()
+    empty_path = path.glyph()
     seen_chars = set()
     fonts = {'regular': {}, 'bold': {}}
     for provider in providers:
@@ -76,7 +76,7 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
                     continue
                 seen_chars.add(char)
                 fonts['regular'][char] = {'width': width * scale, 'path': empty_path}
-                fonts['bold'][char] = {'width': width * scale, 'path': empty_path}
+                fonts['bold'][char] = {'width': (width + 1) * scale, 'path': empty_path}
         elif provider['type'] == 'bitmap':
             img = read_image(jar, provider['file'])
             glyph_width = img.width // len(provider['chars'][0])
@@ -88,15 +88,19 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
                     if char in seen_chars:
                         continue
                     seen_chars.add(char)
-                    glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height))
+                    glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height)).convert('RGBA')
+                    bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height + 1))
+                    bold_glyph.paste(glyph, (0, 0), glyph)
+                    bold_glyph.paste(glyph, (1, 0), glyph)
                     (path, width) = vectorize(glyph, scale, (0, 1))
+                    (bold_path, bold_width) = vectorize(bold_glyph, scale, (0, 1))
                     fonts['regular'][char] = {'width': (width + 1) * scale, 'path': path}
-                    fonts['bold'][char] = {'width': (width + 1) * scale, 'path': path}
+                    fonts['bold'][char] = {'width': (bold_width + 1) * scale, 'path': bold_path}
     for style, data in fonts.items():
         font = make_font(name, style, empty_path, data)
-        font.save(f'out/{name}-{style}.otf')
+        font.save(f'out/{name}-{style}.ttf')
 
-def make_font(name: str, style: str, empty_path: fontTools.misc.psCharStrings.T2CharString, char_data: dict) -> fontTools.fontBuilder.FontBuilder:
+def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict) -> fontTools.fontBuilder.FontBuilder:
     version = '0.1'
     nameStrings = dict(
         familyName = dict(en = name),
@@ -116,14 +120,14 @@ def make_font(name: str, style: str, empty_path: fontTools.misc.psCharStrings.T2
         codepoints[ord(char)] = char_name
         char_widths[char_name] = data['width']
         char_paths[char_name] = data['path']
-    font = fontTools.fontBuilder.FontBuilder(24, isTTF=False)
+    font = fontTools.fontBuilder.FontBuilder(24, isTTF=True)
     font.setupGlyphOrder(defined_glyphs)
     font.setupCharacterMap(codepoints)
-    font.setupCFF(nameStrings['psName'], {'FullName': nameStrings['psName']}, char_paths, {})
-    lsb = {gn: cs.calcBounds(None)[0] for gn, cs in char_paths.items()}
+    font.setupGlyf(char_paths)
     metrics = {}
+    glyphTable = font.font["glyf"]
     for gn, advanceWidth in char_widths.items():
-        metrics[gn] = (advanceWidth, lsb[gn])
+        metrics[gn] = (advanceWidth, glyphTable[gn].xMin)
     font.setupHorizontalMetrics(metrics)
     font.setupHorizontalHeader(ascent=14, descent=2)
     font.setupNameTable(nameStrings)
@@ -231,9 +235,9 @@ def separate_regions(mask: pygame.mask.Mask) -> tuple[list[pygame.mask.Mask], li
         unfilled.append(fixed)
     return (filled, unfilled)
 
-def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tuple[fontTools.misc.psCharStrings.T2CharString, int]:
+def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, int]:
     ox, oy = offset
-    pen = fontTools.pens.t2CharStringPen.T2CharStringPen(glyph.width * scale, None)
+    pen = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     def move_pen(point: tuple[int, int]):
         x, y = point
         x += ox
@@ -266,7 +270,7 @@ def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tu
             for point in outline_points[1:]:
                 line_pen(point)
             pen.closePath()
-    return (pen.getCharString(), width)
+    return (pen.glyph(), width)
 
 def get_latest() -> dict | None:
     cached_path = 'out/manifest.json'
