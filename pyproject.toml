@@ -1,0 +1,12 @@
+[project]
+name = "font"
+version = "0.1.0"
+description = "Convert Minecraft fonts to OTFs"
+requires-python = ">=3.13"
+dependencies = [
+    "fonttools>=4.58.1",
+    "pillow>=11.2.1",
+    "pygame>=2.6.1",
+    "pylint>=3.3.7",
+    "requests>=2.32.3",
+]
