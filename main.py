@@ -3,7 +3,6 @@ import requests
 import os
 import json
 import zipfile
-import unicodedata
 import pygame
 import PIL.Image
 import fontTools.fontBuilder
@@ -13,28 +12,68 @@ import fontTools.ttLib.tables._g_l_y_f
 
 def main():
     latest = get_latest()
-    if latest is not None:
-        name = latest['id']
-        meta_url = latest['url']
-        cached_path = f'out/minecraft-{name}.jar'
-        if not os.path.exists(cached_path):
-            print('Downloading minecraft jar...')
-            response = requests.get(meta_url)
-            data = response.json()
-            client_jar = data['downloads']['client']['url']
-            response = requests.get(client_jar)
-            os.makedirs('out', exist_ok=True)
-            with open(cached_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=16 * 1024):
-                    f.write(chunk)
-        with zipfile.ZipFile(cached_path, 'r') as jar:
-            prefix = 'assets/minecraft/font/'
-            for entry in jar.namelist():
-                if entry.startswith(prefix) and not entry.startswith(f'{prefix}include/'):
-                    name = entry.removeprefix(prefix).removesuffix('.json')
-                    text = jar.read(entry)
-                    data = json.loads(text)
-                    convert_font(name, data, jar)
+    name = latest['id']
+    meta_url = latest['url']
+    cached_path = f'out/minecraft-{name}.jar'
+    if not os.path.exists(cached_path):
+        print('Downloading minecraft jar...')
+        response = requests.get(meta_url)
+        data = response.json()
+        client_jar = data['downloads']['client']['url']
+        response = requests.get(client_jar)
+        os.makedirs('out', exist_ok=True)
+        with open(cached_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=16 * 1024):
+                f.write(chunk)
+    aglfn = get_aglfn()
+    with zipfile.ZipFile(cached_path, 'r') as jar:
+        prefix = 'assets/minecraft/font/'
+        for entry in jar.namelist():
+            if entry.startswith(prefix) and not entry.startswith(f'{prefix}include/'):
+                name = entry.removeprefix(prefix).removesuffix('.json')
+                text = jar.read(entry)
+                data = json.loads(text)
+                convert_font(name, data, jar, aglfn)
+
+def get_latest() -> dict:
+    cached_path = 'out/manifest.json'
+    try:
+        with open(cached_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print('Downloading version manifest...')
+        manifest_url = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
+        response = requests.get(manifest_url)
+        data = response.json()
+        os.makedirs('out', exist_ok=True)
+        with open(cached_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+    snapshot_id = data['latest']['snapshot']
+    for version in data['versions']:
+        if version['id'] == snapshot_id:
+            return version
+    raise ValueError(snapshot_id)
+
+def get_aglfn() -> dict[str, str]:
+    cached_path = 'out/aglfn.txt'
+    if not os.path.exists(cached_path):
+        print('Downloading Adobe AGLFN...')
+        response = requests.get('https://raw.githubusercontent.com/adobe-type-tools/agl-aglfn/refs/heads/master/aglfn.txt')
+        with open(cached_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=16 * 1024):
+                f.write(chunk)
+    aglfn_map = {}
+    with open(cached_path, 'r', encoding='utf-8') as aglfn:
+        for line in aglfn.readlines():
+            if line.startswith('#') or line.isspace() or len(line) == 0:
+                continue
+            unihex, name, _uniname = line.split(';')
+            uninum = int(unihex, 16)
+            codepoint = chr(uninum)
+            aglfn_map[codepoint] = name
+    return aglfn_map
+
+    
 
 def read_json(jar: zipfile.ZipFile, resource: str, kind: str) -> dict:
     namespace, rest = resource.split(':')
@@ -50,7 +89,7 @@ def read_image(jar: zipfile.ZipFile, resource: str):
     img = PIL.Image.open(io.BytesIO(data))
     return img
 
-def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
+def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, str]):
     providers: list[dict] = []
     providers.extend(data['providers'])
     index = 0
@@ -68,6 +107,22 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
     empty_path = path.glyph()
     seen_chars = set()
     fonts = {'regular': {}, 'bold': {}}
+    def add_bitmap_glyph(char: str, glyph: PIL.Image.Image):
+        seen_chars.add(char)
+        bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height + 1))
+        bold_glyph.paste(glyph, (0, 0), glyph)
+        bold_glyph.paste(glyph, (1, 0), glyph)
+        (path, width) = vectorize(glyph, scale, (0, 1))
+        (bold_path, bold_width) = vectorize(bold_glyph, scale, (0, 1))
+        fonts['regular'][char] = {'width': (width + 1) * scale, 'path': path}
+        fonts['bold'][char] = {'width': (bold_width + 1) * scale, 'path': bold_path}
+    missing = PIL.Image.new('RGBA', (5, 8))
+    missing_px = missing.load()
+    for y in range(missing.height):
+        for x in range(missing.width):
+            if x == 0 or y == 0 or x == missing.width - 1 or y == missing.height - 1:
+                missing_px[x, y] = (255, 255, 255, 255)
+    add_bitmap_glyph('.notdef', missing)
     for provider in providers:
         print('\t' + str(provider))
         if provider['type'] == 'space':
@@ -87,20 +142,13 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
                         continue
                     if char in seen_chars:
                         continue
-                    seen_chars.add(char)
                     glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height)).convert('RGBA')
-                    bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height + 1))
-                    bold_glyph.paste(glyph, (0, 0), glyph)
-                    bold_glyph.paste(glyph, (1, 0), glyph)
-                    (path, width) = vectorize(glyph, scale, (0, 1))
-                    (bold_path, bold_width) = vectorize(bold_glyph, scale, (0, 1))
-                    fonts['regular'][char] = {'width': (width + 1) * scale, 'path': path}
-                    fonts['bold'][char] = {'width': (bold_width + 1) * scale, 'path': bold_path}
+                    add_bitmap_glyph(char, glyph)
     for style, data in fonts.items():
-        font = make_font(name, style, empty_path, data)
+        font = make_font(name, style, empty_path, data, aglfn)
         font.save(f'out/{name}-{style}.ttf')
 
-def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict) -> fontTools.fontBuilder.FontBuilder:
+def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     version = '0.1'
     nameStrings = dict(
         familyName = dict(en = name),
@@ -115,9 +163,12 @@ def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f
     char_widths = {'.notdef': 0, '.null': 0}
     char_paths = {'.notdef': empty_path, '.null': empty_path}
     for char, data in char_data.items():
-        char_name = unicodedata.name(char)
-        defined_glyphs.append(char_name)
-        codepoints[ord(char)] = char_name
+        if char not in ('.notdef', '.null'):
+            char_name = aglfn.get(char, 'uni' + format(ord(char), '04x'))
+            defined_glyphs.append(char_name)
+            codepoints[ord(char)] = char_name
+        else:
+            char_name = char
         char_widths[char_name] = data['width']
         char_paths[char_name] = data['path']
     font = fontTools.fontBuilder.FontBuilder(24, isTTF=True)
@@ -271,25 +322,6 @@ def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tu
                 line_pen(point)
             pen.closePath()
     return (pen.glyph(), width)
-
-def get_latest() -> dict | None:
-    cached_path = 'out/manifest.json'
-    try:
-        with open(cached_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print('Downloading version manifest...')
-        manifest_url = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
-        response = requests.get(manifest_url)
-        data = response.json()
-        os.makedirs('out', exist_ok=True)
-        with open(cached_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f)
-    snapshot_id = data['latest']['snapshot']
-    for version in data['versions']:
-        if version['id'] == snapshot_id:
-            return version
-    return None
 
 if __name__ == '__main__':
     main()
