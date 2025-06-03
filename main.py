@@ -73,8 +73,6 @@ def get_aglfn() -> dict[str, str]:
             aglfn_map[codepoint] = name
     return aglfn_map
 
-    
-
 def read_json(jar: zipfile.ZipFile, resource: str, kind: str) -> dict:
     namespace, rest = resource.split(':')
     path = f'assets/{namespace}/{kind}/{rest}.json'
@@ -212,9 +210,9 @@ def is_set(mask: pygame.mask.Mask, point: tuple[int, int]) -> bool:
 
 def outline(mask: pygame.mask.Mask) -> list[tuple[int, int]]:
     start = start_point(mask)
-    facing = 'up'
+    facing = 'right'
     pos = start
-    result = []
+    result = [pos]
     while True:
         x, y = pos
         top_left = is_set(mask, (x - 1, y - 1))
@@ -293,10 +291,29 @@ def separate_regions(mask: pygame.mask.Mask) -> tuple[list[pygame.mask.Mask], li
         unfilled.append(fixed)
     return (filled, unfilled)
 
+def collinear(p1: tuple[int, int], p2: tuple[int, int], p3: tuple[int, int]):
+    x1, y1 = p2[0] - p1[0], p2[1] - p1[1]
+    x2, y2 = p3[0] - p1[0], p3[1] - p1[1]
+    return abs(x1 * y2 - x2 * y1) < 1e-12
+
 def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, int]:
     ox, oy = offset
     pen = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
+    pen_pos: dict[str, tuple[int, int] | None] = {'current': None, 'next': None}
+    def draw_last():
+        if pen_pos['next'] is not None:
+            x, y = pen_pos['next']
+            x += ox
+            y += oy
+            if italic:
+                x += (glyph.height - y) / 4
+            pen.lineTo((x * scale, (glyph.height - y) * scale))
+            pen_pos['current'] = pen_pos['next']
+            pen_pos['next'] = None
     def move_pen(point: tuple[int, int]):
+        draw_last()
+        pen_pos['current'] = point
+        pen_pos['next'] = None
         x, y = point
         x += ox
         y += oy
@@ -304,12 +321,9 @@ def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int], itali
             x += (glyph.height - y) / 4
         pen.moveTo((x * scale, (glyph.height - y) * scale))
     def line_pen(point: tuple[int, int]):
-        x, y = point
-        x += ox
-        y += oy
-        if italic:
-            x += (glyph.height - y) / 4
-        pen.lineTo((x * scale, (glyph.height - y) * scale))
+        if pen_pos['next'] is not None and not collinear(pen_pos['current'], pen_pos['next'], point):
+            draw_last()
+        pen_pos['next'] = point
     glyph = glyph.convert('RGBA')
     surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
     mask = pygame.mask.from_surface(surface)
@@ -325,12 +339,14 @@ def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int], itali
             move_pen(outline_points[0])
             for point in outline_points[1:]:
                 line_pen(point)
+            pen_pos['next'] = None
             pen.closePath()
         for region in empty:
             outline_points = list(reversed(outline(region)))
             move_pen(outline_points[0])
             for point in outline_points[1:]:
                 line_pen(point)
+            pen_pos['next'] = None
             pen.closePath()
     return (pen.glyph(), width)
 
