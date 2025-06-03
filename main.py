@@ -8,6 +8,7 @@ import pygame
 import PIL.Image
 import fontTools.fontBuilder
 import fontTools.pens.t2CharStringPen
+import fontTools.misc.psCharStrings
 
 
 def main():
@@ -49,7 +50,7 @@ def read_image(jar: zipfile.ZipFile, resource: str):
     img = PIL.Image.open(io.BytesIO(data))
     return img
 
-def convert_font(name, data: dict, jar: zipfile.ZipFile):
+def convert_font(name: str, data: dict, jar: zipfile.ZipFile):
     providers: list[dict] = []
     providers.extend(data['providers'])
     index = 0
@@ -59,66 +60,76 @@ def convert_font(name, data: dict, jar: zipfile.ZipFile):
             del providers[index]
             providers[index:index] = reference['providers']
         index += 1
-
-    font = fontTools.fontBuilder.FontBuilder(1024, isTTF=False)
-    familyName = f"Minecraft-{name}"
-    styleName = "Normal"
-    version = "0.1"
-    nameStrings = dict(
-        familyName=dict(en=familyName),
-        styleName=dict(en=styleName),
-        uniqueFontIdentifier= familyName + "." + styleName,
-        fullName=familyName + "-" + styleName,
-        psName=familyName + "-" + styleName,
-        version="Version " + version,
-    )
-    pen = fontTools.pens.t2CharStringPen.T2CharStringPen(600, None)
-    pen.moveTo((0, 0))
-    pen.closePath()
-    charString = pen.getCharString()
-    defined_glyphs = ['.notdef', '.null']
-    codepoints: dict[int, str] = {}
-    char_widths: dict[str, int] = {'.notdef': 0, '.null': 0}
-    char_strings = {'.notdef': charString, '.null': charString}
+    print(name)
+    scale = 2
+    path = fontTools.pens.t2CharStringPen.T2CharStringPen(0, None)
+    path.moveTo((0, 0))
+    path.closePath()
+    empty_path = path.getCharString()
+    seen_chars = set()
+    fonts = {'regular': {}, 'bold': {}}
     for provider in providers:
-        print(provider)
+        print('\t' + str(provider))
         if provider['type'] == 'space':
             for char,width in provider['advances'].items():
-                char_name = unicodedata.name(char)
-                defined_glyphs.append(char_name)
-                codepoints[ord(char)] = char_name
-                char_widths[char_name] = width
-                char_strings[char_name] = charString
+                if char in seen_chars:
+                    continue
+                seen_chars.add(char)
+                fonts['regular'][char] = {'width': width * scale, 'path': empty_path}
+                fonts['bold'][char] = {'width': width * scale, 'path': empty_path}
         elif provider['type'] == 'bitmap':
             img = read_image(jar, provider['file'])
             glyph_width = img.width // len(provider['chars'][0])
             glyph_height = img.height // len(provider['chars'])
-            scale = 100
             for y,row in enumerate(provider['chars']):
                 for x,char in enumerate(row):
                     if char == '\u0000':
                         continue
-                    glyph = img.crop((x * glyph_width, y * glyph_width, (x + 1) * glyph_width, (y + 1) * glyph_height))
-                    pen = vectorize(glyph, scale)
-                    charString2 = pen.getCharString()
-                    char_name = unicodedata.name(char)
-                    defined_glyphs.append(char_name)
-                    codepoints[ord(char)] = char_name
-                    char_widths[char_name] = glyph_width * scale
-                    char_strings[char_name] = charString2
+                    if char in seen_chars:
+                        continue
+                    seen_chars.add(char)
+                    glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height))
+                    (path, width) = vectorize(glyph, scale, (0, 1))
+                    fonts['regular'][char] = {'width': (width + 1) * scale, 'path': path}
+                    fonts['bold'][char] = {'width': (width + 1) * scale, 'path': path}
+    for style, data in fonts.items():
+        font = make_font(name, style, empty_path, data)
+        font.save(f'out/{name}-{style}.otf')
+
+def make_font(name: str, style: str, empty_path: fontTools.misc.psCharStrings.T2CharString, char_data: dict) -> fontTools.fontBuilder.FontBuilder:
+    version = '0.1'
+    nameStrings = dict(
+        familyName = dict(en = name),
+        styleName = dict(en = style),
+        uniqueFontIdentifier = name + '.' + style,
+        fullName = name + '-' + style,
+        psName = name + '-' + style,
+        version = 'Version ' + version,
+    )
+    defined_glyphs = ['.notdef', '.null']
+    codepoints = {}
+    char_widths = {'.notdef': 0, '.null': 0}
+    char_paths = {'.notdef': empty_path, '.null': empty_path}
+    for char, data in char_data.items():
+        char_name = unicodedata.name(char)
+        defined_glyphs.append(char_name)
+        codepoints[ord(char)] = char_name
+        char_widths[char_name] = data['width']
+        char_paths[char_name] = data['path']
+    font = fontTools.fontBuilder.FontBuilder(24, isTTF=False)
     font.setupGlyphOrder(defined_glyphs)
     font.setupCharacterMap(codepoints)
-    font.setupCFF(nameStrings["psName"], {"FullName": nameStrings["psName"]}, char_strings, {})
-    lsb = {gn: cs.calcBounds(None)[0] for gn, cs in char_strings.items()}
+    font.setupCFF(nameStrings['psName'], {'FullName': nameStrings['psName']}, char_paths, {})
+    lsb = {gn: cs.calcBounds(None)[0] for gn, cs in char_paths.items()}
     metrics = {}
     for gn, advanceWidth in char_widths.items():
         metrics[gn] = (advanceWidth, lsb[gn])
     font.setupHorizontalMetrics(metrics)
-    font.setupHorizontalHeader(ascent=824, descent=200)
+    font.setupHorizontalHeader(ascent=14, descent=2)
     font.setupNameTable(nameStrings)
-    font.setupOS2(sTypoAscender=824, usWinAscent=824, usWinDescent=200)
-    font.setupPost()
-    font.save(f'out/{name}.otf')
+    font.setupOS2(sTypoAscender=14, usWinAscent=14, sTypoDescender=2, usWinDescent=2, sCapHeight=14, sxHeight=10, yStrikeoutPosition=6, yStrikeoutSize=2)
+    font.setupPost(underlinePosition=2, underlineThickness=2)
+    return font
 
 def start_point(mask: pygame.mask.Mask) -> tuple[int, int]:
     w, h = mask.get_size()
@@ -220,13 +231,18 @@ def separate_regions(mask: pygame.mask.Mask) -> tuple[list[pygame.mask.Mask], li
         unfilled.append(fixed)
     return (filled, unfilled)
 
-def vectorize(glyph: PIL.Image.Image, scale: int) -> fontTools.pens.t2CharStringPen.T2CharStringPen:
+def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tuple[fontTools.misc.psCharStrings.T2CharString, int]:
+    ox, oy = offset
     pen = fontTools.pens.t2CharStringPen.T2CharStringPen(glyph.width * scale, None)
     def move_pen(point: tuple[int, int]):
         x, y = point
+        x += ox
+        y += oy
         pen.moveTo((x * scale, (glyph.height - y) * scale))
     def line_pen(point: tuple[int, int]):
         x, y = point
+        x += ox
+        y += oy
         pen.lineTo((x * scale, (glyph.height - y) * scale))
     glyph = glyph.convert('RGBA')
     surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
@@ -235,7 +251,9 @@ def vectorize(glyph: PIL.Image.Image, scale: int) -> fontTools.pens.t2CharString
     if len(filled) == 0:
         move_pen((0, 0))
         pen.closePath()
+        width = 0
     else:
+        width = max(map(lambda x: x.right, mask.get_bounding_rects()))
         for region in filled:
             outline_points = outline(region)
             move_pen(outline_points[0])
@@ -248,7 +266,7 @@ def vectorize(glyph: PIL.Image.Image, scale: int) -> fontTools.pens.t2CharString
             for point in outline_points[1:]:
                 line_pen(point)
             pen.closePath()
-    return pen
+    return (pen.getCharString(), width)
 
 def get_latest() -> dict | None:
     cached_path = 'out/manifest.json'
