@@ -100,22 +100,26 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
             providers[index:index] = reference['providers']
         index += 1
     print(name)
-    scale = 2
+    scale = 200
     path = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     path.moveTo((0, 0))
     path.closePath()
     empty_path = path.glyph()
     seen_chars = set()
-    fonts = {'regular': {}, 'bold': {}}
+    fonts = {'Regular': {}, 'Bold': {}, 'Italic': {}, 'BoldItalic': {}}
     def add_bitmap_glyph(char: str, glyph: PIL.Image.Image):
         seen_chars.add(char)
         bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height + 1))
         bold_glyph.paste(glyph, (0, 0), glyph)
         bold_glyph.paste(glyph, (1, 0), glyph)
         (path, width) = vectorize(glyph, scale, (0, 1))
+        (italic_path, italic_width) = vectorize(glyph, scale, (0, 1), italic=True)
         (bold_path, bold_width) = vectorize(bold_glyph, scale, (0, 1))
-        fonts['regular'][char] = {'width': (width + 1) * scale, 'path': path}
-        fonts['bold'][char] = {'width': (bold_width + 1) * scale, 'path': bold_path}
+        (bold_italic_path, bold_italic_width) = vectorize(bold_glyph, scale, (0, 1), italic=True)
+        fonts['Regular'][char] = {'width': (width + 1) * scale, 'path': path}
+        fonts['Italic'][char] = {'width': (italic_width + 1) * scale, 'path': italic_path}
+        fonts['Bold'][char] = {'width': (bold_width + 1) * scale, 'path': bold_path}
+        fonts['BoldItalic'][char] = {'width': (bold_italic_width + 1) * scale, 'path': bold_italic_path}
     missing = PIL.Image.new('RGBA', (5, 8))
     missing_px = missing.load()
     for y in range(missing.height):
@@ -130,8 +134,10 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                 if char in seen_chars:
                     continue
                 seen_chars.add(char)
-                fonts['regular'][char] = {'width': width * scale, 'path': empty_path}
-                fonts['bold'][char] = {'width': (width + 1) * scale, 'path': empty_path}
+                fonts['Regular'][char] = {'width': width * scale, 'path': empty_path}
+                fonts['Italic'][char] = {'width': width * scale, 'path': empty_path}
+                fonts['Bold'][char] = {'width': (width + 1) * scale, 'path': empty_path}
+                fonts['BoldItalic'][char] = {'width': (width + 1) * scale, 'path': empty_path}
         elif provider['type'] == 'bitmap':
             img = read_image(jar, provider['file'])
             glyph_width = img.width // len(provider['chars'][0])
@@ -145,8 +151,9 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                     glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height)).convert('RGBA')
                     add_bitmap_glyph(char, glyph)
     for style, data in fonts.items():
-        font = make_font(name, style, empty_path, data, aglfn)
-        font.save(f'out/{name}-{style}.ttf')
+        full_name = 'Minecraft' + name.capitalize()
+        font = make_font(full_name, style, empty_path, data, aglfn)
+        font.save(f'out/{full_name}-{style}.ttf')
 
 def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     version = '0.1'
@@ -171,7 +178,7 @@ def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f
             char_name = char
         char_widths[char_name] = data['width']
         char_paths[char_name] = data['path']
-    font = fontTools.fontBuilder.FontBuilder(24, isTTF=True)
+    font = fontTools.fontBuilder.FontBuilder(unitsPerEm=2048, isTTF=True)
     font.setupGlyphOrder(defined_glyphs)
     font.setupCharacterMap(codepoints)
     font.setupGlyf(char_paths)
@@ -180,10 +187,10 @@ def make_font(name: str, style: str, empty_path: fontTools.ttLib.tables._g_l_y_f
     for gn, advanceWidth in char_widths.items():
         metrics[gn] = (advanceWidth, glyphTable[gn].xMin)
     font.setupHorizontalMetrics(metrics)
-    font.setupHorizontalHeader(ascent=14, descent=2)
+    font.setupHorizontalHeader(ascent=1400, descent=200)
     font.setupNameTable(nameStrings)
-    font.setupOS2(sTypoAscender=14, usWinAscent=14, sTypoDescender=2, usWinDescent=2, sCapHeight=14, sxHeight=10, yStrikeoutPosition=6, yStrikeoutSize=2)
-    font.setupPost(underlinePosition=2, underlineThickness=2)
+    font.setupOS2(sTypoAscender=1400, usWinAscent=1400, sTypoDescender=200, usWinDescent=200, sCapHeight=1400, sxHeight=1000, yStrikeoutPosition=600, yStrikeoutSize=200)
+    font.setupPost(underlinePosition=200, underlineThickness=200)
     return font
 
 def start_point(mask: pygame.mask.Mask) -> tuple[int, int]:
@@ -286,18 +293,22 @@ def separate_regions(mask: pygame.mask.Mask) -> tuple[list[pygame.mask.Mask], li
         unfilled.append(fixed)
     return (filled, unfilled)
 
-def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int]) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, int]:
+def vectorize(glyph: PIL.Image.Image, scale: int, offset: tuple[int, int], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, int]:
     ox, oy = offset
     pen = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     def move_pen(point: tuple[int, int]):
         x, y = point
         x += ox
         y += oy
+        if italic:
+            x += (glyph.height - y) / 4
         pen.moveTo((x * scale, (glyph.height - y) * scale))
     def line_pen(point: tuple[int, int]):
         x, y = point
         x += ox
         y += oy
+        if italic:
+            x += (glyph.height - y) / 4
         pen.lineTo((x * scale, (glyph.height - y) * scale))
     glyph = glyph.convert('RGBA')
     surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
