@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import zipfile
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 import PIL.Image
 import fontTools.fontBuilder
@@ -14,29 +15,31 @@ def main():
     latest = get_latest()
     name = latest['id']
     meta_url = latest['url']
-    cached_path = f'out/minecraft-{name}.jar'
+    cached_path = f'cache/minecraft-{name}.jar'
     if not os.path.exists(cached_path):
         print('Downloading minecraft jar...')
         response = requests.get(meta_url)
         data = response.json()
         client_jar = data['downloads']['client']['url']
         response = requests.get(client_jar)
-        os.makedirs('out', exist_ok=True)
+        os.makedirs('cache', exist_ok=True)
         with open(cached_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=16 * 1024):
                 f.write(chunk)
     aglfn = get_aglfn()
+    print('Converting fonts...')
     with zipfile.ZipFile(cached_path, 'r') as jar:
         prefix = 'assets/minecraft/font/'
         for entry in jar.namelist():
             if entry.startswith(prefix) and not entry.startswith(f'{prefix}include/'):
                 name = entry.removeprefix(prefix).removesuffix('.json')
+                print('\t' + name)
                 text = jar.read(entry)
                 data = json.loads(text)
                 convert_font(name, data, jar, aglfn)
 
 def get_latest() -> dict:
-    cached_path = 'out/manifest.json'
+    cached_path = 'cache/manifest.json'
     try:
         with open(cached_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -45,7 +48,7 @@ def get_latest() -> dict:
         manifest_url = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
         response = requests.get(manifest_url)
         data = response.json()
-        os.makedirs('out', exist_ok=True)
+        os.makedirs('cache', exist_ok=True)
         with open(cached_path, 'w', encoding='utf-8') as f:
             json.dump(data, f)
     snapshot_id = data['latest']['snapshot']
@@ -55,11 +58,11 @@ def get_latest() -> dict:
     raise ValueError(snapshot_id)
 
 def get_aglfn() -> dict[str, str]:
-    cached_path = 'out/aglfn.txt'
+    cached_path = 'cache/aglfn.txt'
     if not os.path.exists(cached_path):
         print('Downloading Adobe AGLFN...')
         response = requests.get('https://raw.githubusercontent.com/adobe-type-tools/agl-aglfn/refs/heads/master/aglfn.txt')
-        os.makedirs('out', exist_ok=True)
+        os.makedirs('cache', exist_ok=True)
         with open(cached_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=16 * 1024):
                 f.write(chunk)
@@ -98,7 +101,6 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
             del providers[index]
             providers[index:index] = reference['providers']
         index += 1
-    print(name)
     path = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     path.moveTo((0, 0))
     path.closePath()
@@ -131,7 +133,6 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                 missing_px[x, y] = (255, 255, 255, 255)
     add_bitmap_glyph('.notdef', missing, 8, 8)
     for provider in providers:
-        print('\t' + str(provider))
         if provider['type'] == 'space':
             for char,width in provider['advances'].items():
                 if char in seen_chars:
@@ -157,18 +158,20 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                     add_bitmap_glyph(char, glyph, height, ascent)
     for style, data in fonts.items():
         full_name = 'Minecraft' + name.capitalize()
-        font = make_font(full_name, style, font_em, empty_path, data, aglfn)
+        italic_angle = 11.25 if 'Italic' in style else 0
+        font = make_font(full_name, style, font_em, italic_angle, empty_path, data, aglfn)
+        os.makedirs('out', exist_ok=True)
         font.save(f'out/{full_name}-{style}.ttf')
 
-def make_font(name: str, style: str, font_em: int, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
-    version = '0.1'
+def make_font(name: str, style: str, font_em: int, italic_angle: float, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     nameStrings = dict(
-        familyName = dict(en = name),
-        styleName = dict(en = style),
+        copyright = 'Copyright (c) 2009 Mojang AB',
+        familyName = name,
+        styleName = style,
         uniqueFontIdentifier = name + '.' + style,
         fullName = name + '-' + style,
         psName = name + '-' + style,
-        version = 'Version ' + version,
+        version = 'Version 1.000',
     )
     defined_glyphs = ['.notdef', '.null']
     codepoints = {}
@@ -199,7 +202,7 @@ def make_font(name: str, style: str, font_em: int, empty_path: fontTools.ttLib.t
     font.setupHorizontalHeader(ascent=ascent, descent=-descent)
     font.setupNameTable(nameStrings)
     font.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent, usWinAscent=ascent, usWinDescent=descent, sCapHeight=font_em*7//12, sxHeight=font_em*5//12, yStrikeoutPosition=font_em*3//12, yStrikeoutSize=font_em*1//12, sTypoLineGap=0)
-    font.setupPost(underlinePosition=font_em*1//12, underlineThickness=font_em*1//12)
+    font.setupPost(underlinePosition=font_em*1//12, underlineThickness=font_em*1//12, italicAngle=-italic_angle)
     font.updateHead(xMin=0, xMax=int(widest), yMin=-descent, yMax=int(tallest))
     return font
 
