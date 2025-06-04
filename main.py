@@ -2,6 +2,7 @@ import io
 import requests
 import os
 import json
+import datetime
 import zipfile
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
@@ -17,7 +18,7 @@ def main():
     meta_url = latest['url']
     cached_path = f'cache/minecraft-{name}.jar'
     if not os.path.exists(cached_path):
-        print('Downloading minecraft jar...')
+        print(f'Downloading minecraft jar {name}...')
         response = requests.get(meta_url)
         data = response.json()
         client_jar = data['downloads']['client']['url']
@@ -29,15 +30,11 @@ def main():
     aglfn = get_aglfn()
     print('Converting fonts...')
     with zipfile.ZipFile(cached_path, 'r') as jar:
-        prefix = 'assets/minecraft/font/'
-        for entry in jar.namelist():
-            if entry.startswith(prefix) and not entry.startswith(f'{prefix}include/'):
-                name = entry.removeprefix(prefix).removesuffix('.json')
-                print('\t' + name)
-                text = jar.read(entry)
-                data = json.loads(text)
-                convert_font(name, data, jar, aglfn)
-
+        convert_font('Default', 'assets/minecraft/font/default.json', jar, datetime.datetime.fromisoformat('2009-05-16T16:52:00Z'), aglfn)
+        convert_font('Enchanting', 'assets/minecraft/font/alt.json', jar, datetime.datetime.fromisoformat('2011-10-06T00:00:00Z'), aglfn)
+        convert_font('Illager Runes', 'assets/minecraft/font/illageralt.json', jar, datetime.datetime.fromisoformat('2021-09-15T16:04:30Z'), aglfn)
+    print('Done!')
+    
 def get_latest() -> dict:
     cached_path = 'cache/manifest.json'
     try:
@@ -77,27 +74,38 @@ def get_aglfn() -> dict[str, str]:
             aglfn_map[codepoint] = name
     return aglfn_map
 
-def read_json(jar: zipfile.ZipFile, resource: str, kind: str) -> dict:
+def read_json(jar: zipfile.ZipFile, resource: str, kind: str) -> tuple[dict, datetime.datetime]:
     namespace, rest = resource.split(':')
     path = f'assets/{namespace}/{kind}/{rest}.json'
     text = jar.read(path)
     data = json.loads(text)
-    return data
+    date = jar.getinfo(path).date_time
+    return (data, date_time(date))
 
-def read_image(jar: zipfile.ZipFile, resource: str):
+def read_image(jar: zipfile.ZipFile, resource: str) -> tuple[PIL.Image.Image, datetime.datetime]:
     namespace, rest = resource.split(':')
     path = f'assets/{namespace}/textures/{rest}'
     data = jar.read(path)
     img = PIL.Image.open(io.BytesIO(data))
-    return img
+    date = jar.getinfo(path).date_time
+    return (img, date_time(date))
 
-def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, str]):
+def date_time(jartime: tuple) -> datetime.datetime:
+    y, m, d, h, mm, s = jartime
+    return datetime.datetime(y, m, d, h, mm, s, 0, tzinfo=datetime.timezone.utc)
+
+def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: datetime.datetime, aglfn: dict[str, str]):
+    modified_date = date_time(jar.getinfo(entry).date_time)
+    text = jar.read(entry)
+    data = json.loads(text)
     providers: list[dict] = []
     providers.extend(data['providers'])
     index = 0
     while index < len(providers):
         if providers[index]['type'] == 'reference':
-            reference = read_json(jar, providers[index]['id'], 'font')
+            (reference, date) = read_json(jar, providers[index]['id'], 'font')
+            if date > modified_date:
+                modified_date = date
             del providers[index]
             providers[index:index] = reference['providers']
         index += 1
@@ -112,16 +120,15 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
     pixel_scale = font_em / chatbox_height
     def add_bitmap_glyph(char: str, glyph: PIL.Image.Image, height: int, ascent: int):
         seen_chars.add(char)
-        bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height + 1))
+        bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height))
         bold_glyph.paste(glyph, (0, 0), glyph)
         bold_glyph.paste(glyph, (1, 0), glyph)
         scale = height / glyph.height * pixel_scale
         offset = (0, height - ascent)
-        bold_offset = (0, height - ascent + 1)
         (path, (w, h)) = vectorize(glyph, scale, offset)
         (italic_path, (iw, ih)) = vectorize(glyph, scale, offset, italic=True)
-        (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, bold_offset)
-        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, bold_offset, italic=True)
+        (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, offset)
+        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, offset, italic=True)
         fonts['Regular'][char] = {'width': (w + 1) * scale, 'height': h * scale, 'path': path}
         fonts['Italic'][char] = {'width': (iw + 1) * scale, 'height': ih * scale, 'path': italic_path}
         fonts['Bold'][char] = {'width': (bw + 1) * scale, 'height': bh * scale, 'path': bold_path}
@@ -144,7 +151,9 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                 fonts['Bold'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
                 fonts['BoldItalic'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
         elif provider['type'] == 'bitmap':
-            img = read_image(jar, provider['file'])
+            (img, date) = read_image(jar, provider['file'])
+            if date > modified_date:
+                modified_date = date
             height = provider.get('height', 8)
             ascent = provider['ascent']
             glyph_width = img.width // len(provider['chars'][0])
@@ -158,21 +167,22 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                     glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height)).convert('RGBA')
                     add_bitmap_glyph(char, glyph, height, ascent)
     for style, data in fonts.items():
-        full_name = 'Minecraft' + name.capitalize()
-        italic_angle = 14.05598 if 'Italic' in style else 0
-        font = make_font(full_name, style, font_em, italic_angle, empty_path, data, aglfn)
+        full_name = 'Minecraft ' + name
+        short_name = full_name.replace(' ', '')
+        font = make_font(full_name, style, font_em, (created_date, modified_date), empty_path, data, aglfn)
         os.makedirs('out', exist_ok=True)
-        font.save(f'out/{full_name}-{style}.ttf')
+        font.save(f'out/{short_name}-{style}.ttf')
 
-def make_font(name: str, style: str, font_em: int, italic_angle: float, empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
+def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetime, datetime.datetime], empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     nameStrings = dict(
         copyright = 'Copyright (c) 2009 Mojang AB',
         familyName = name,
         styleName = style,
-        uniqueFontIdentifier = name + '.' + style,
-        fullName = name + '-' + style,
-        psName = name + '-' + style,
+        uniqueFontIdentifier = name.replace(' ', '') + '.' + style,
+        fullName = name + ' ' + style,
         version = 'Version 1.000',
+        psName = name.replace(' ','') + style,
+        sampleText = 'and the universe said I love you'
     )
     defined_glyphs = ['.notdef', '.null']
     codepoints = {}
@@ -202,9 +212,24 @@ def make_font(name: str, style: str, font_em: int, italic_angle: float, empty_pa
     descent = font_em*2//12
     font.setupHorizontalHeader(ascent=ascent, descent=-descent)
     font.setupNameTable(nameStrings)
-    font.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent, usWinAscent=ascent, usWinDescent=descent, sCapHeight=font_em*7//12, sxHeight=font_em*5//12, yStrikeoutPosition=font_em*3//12, yStrikeoutSize=font_em*1//12, sTypoLineGap=0)
+    fs_selection = 0
+    mac_style = 0
+    weight = 400
+    if 'Bold' in style:
+        mac_style += 1
+        fs_selection += 32
+        weight = 700
+    if 'Italic' in style:
+        mac_style += 2
+        fs_selection += 1
+    if 'Bold' not in style and 'Italic' not in style:
+        fs_selection += 64
+    font.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent, usWinAscent=ascent, usWinDescent=descent, sCapHeight=font_em*7//12, sxHeight=font_em*5//12, yStrikeoutPosition=font_em*3//12, yStrikeoutSize=font_em*1//12, sTypoLineGap=0, fsSelection=fs_selection, achVendID="", usWeightClass=weight)
+    italic_angle = 14.05598 if 'Italic' in style else 0
     font.setupPost(underlinePosition=font_em*1//12, underlineThickness=font_em*1//12, italicAngle=-italic_angle)
-    font.updateHead(xMin=0, xMax=int(widest), yMin=-descent, yMax=int(tallest))
+    epoch = datetime.datetime.fromisoformat('1904-01-01T00:00:00Z')
+    created, modified = dates
+    font.updateHead(xMin=0, xMax=int(widest), yMin=-descent, yMax=int(tallest), created=int((created - epoch).total_seconds()), modified=int((modified - epoch).total_seconds()), macStyle=mac_style)
     return font
 
 def start_point(mask: pygame.mask.Mask) -> tuple[int, int]:
