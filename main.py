@@ -158,7 +158,7 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
                     add_bitmap_glyph(char, glyph, height, ascent)
     for style, data in fonts.items():
         full_name = 'Minecraft' + name.capitalize()
-        italic_angle = 11.25 if 'Italic' in style else 0
+        italic_angle = 14.05598 if 'Italic' in style else 0
         font = make_font(full_name, style, font_em, italic_angle, empty_path, data, aglfn)
         os.makedirs('out', exist_ok=True)
         font.save(f'out/{full_name}-{style}.ttf')
@@ -321,7 +321,7 @@ def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[int, int], ita
             x += ox
             y += oy
             if italic:
-                x += (glyph.height - y) / 4
+                x += (glyph.height / 2 - y) / 4
             pen.lineTo((x * scale, (glyph.height - y) * scale))
             pen_pos['current'] = pen_pos['next']
             pen_pos['next'] = None
@@ -333,7 +333,7 @@ def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[int, int], ita
         x += ox
         y += oy
         if italic:
-            x += (glyph.height - y) / 4
+            x += (glyph.height / 2 - y) / 4
         pen.moveTo((x * scale, (glyph.height - y) * scale))
     def line_pen(point: tuple[int, int]):
         if pen_pos['next'] is not None and not collinear(pen_pos['current'], pen_pos['next'], point):
