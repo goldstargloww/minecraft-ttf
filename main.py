@@ -108,7 +108,7 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
     seen_chars = set()
     fonts = {'Regular': {}, 'Bold': {}, 'Italic': {}, 'BoldItalic': {}}
     chatbox_height = 12
-    font_em = 2048
+    font_em = 1200
     pixel_scale = font_em / chatbox_height
     def add_bitmap_glyph(char: str, glyph: PIL.Image.Image, height: int, ascent: int):
         seen_chars.add(char)
@@ -117,10 +117,11 @@ def convert_font(name: str, data: dict, jar: zipfile.ZipFile, aglfn: dict[str, s
         bold_glyph.paste(glyph, (1, 0), glyph)
         scale = height / glyph.height * pixel_scale
         offset = (0, height - ascent)
+        bold_offset = (0, height - ascent + 1)
         (path, (w, h)) = vectorize(glyph, scale, offset)
         (italic_path, (iw, ih)) = vectorize(glyph, scale, offset, italic=True)
-        (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, offset)
-        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, offset, italic=True)
+        (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, bold_offset)
+        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, bold_offset, italic=True)
         fonts['Regular'][char] = {'width': (w + 1) * scale, 'height': h * scale, 'path': path}
         fonts['Italic'][char] = {'width': (iw + 1) * scale, 'height': ih * scale, 'path': italic_path}
         fonts['Bold'][char] = {'width': (bw + 1) * scale, 'height': bh * scale, 'path': bold_path}
