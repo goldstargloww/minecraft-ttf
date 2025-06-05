@@ -226,9 +226,9 @@ def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetim
         fs_selection += 1
     if 'Bold' not in style and 'Italic' not in style:
         fs_selection += 64
-    font.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent, usWinAscent=ascent, usWinDescent=descent, sCapHeight=font_em*7//12, sxHeight=font_em*5//12, yStrikeoutPosition=font_em*3//12, yStrikeoutSize=font_em*1//12, sTypoLineGap=0, fsSelection=fs_selection, achVendID="", usWeightClass=weight)
+    font.setupOS2(sTypoAscender=ascent, sTypoDescender=-descent, usWinAscent=ascent, usWinDescent=descent, sCapHeight=font_em*7//12, sxHeight=font_em*5//12, yStrikeoutPosition=font_em*4//12, yStrikeoutSize=font_em*1//12, sTypoLineGap=0, fsSelection=fs_selection, achVendID="", usWeightClass=weight)
     italic_angle = 14.05598 if 'Italic' in style else 0
-    font.setupPost(underlinePosition=font_em*1//12, underlineThickness=font_em*1//12, italicAngle=-italic_angle)
+    font.setupPost(underlinePosition=-font_em*1//12, underlineThickness=font_em*1//12, italicAngle=-italic_angle)
     epoch = datetime.datetime.fromisoformat('1904-01-01T00:00:00Z')
     created, modified = dates
     font.updateHead(xMin=0, xMax=int(widest), yMin=-descent, yMax=int(tallest), created=int((created - epoch).total_seconds()), modified=int((modified - epoch).total_seconds()), macStyle=mac_style)
