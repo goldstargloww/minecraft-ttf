@@ -124,8 +124,8 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
         bold_glyph.paste(glyph, (0, 0), glyph)
         bold_glyph.paste(glyph, (1, 0), glyph)
         scale = height / glyph.height * pixel_scale
-        offset = (0, (height - ascent) / height * 8)
-        italic_offset = (-6 / height, (height - ascent) / height * 8)
+        offset = (0, (height - ascent))
+        italic_offset = (-6 / height, (height - ascent))
         (path, (w, h)) = vectorize(glyph, scale, offset)
         (italic_path, (iw, ih)) = vectorize(glyph, scale, italic_offset, italic=True)
         (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, offset)
