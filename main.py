@@ -124,15 +124,17 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
         bold_glyph.paste(glyph, (0, 0), glyph)
         bold_glyph.paste(glyph, (1, 0), glyph)
         scale = height / glyph.height * pixel_scale
-        offset = (0, height - ascent)
+        offset = (0, (height - ascent) / height * 8)
+        italic_offset = (-6 / height, (height - ascent) / height * 8)
         (path, (w, h)) = vectorize(glyph, scale, offset)
-        (italic_path, (iw, ih)) = vectorize(glyph, scale, offset, italic=True)
+        (italic_path, (iw, ih)) = vectorize(glyph, scale, italic_offset, italic=True)
         (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, offset)
-        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, offset, italic=True)
-        fonts['Regular'][char] = {'width': (w + 1) * scale, 'height': h * scale, 'path': path}
-        fonts['Italic'][char] = {'width': (iw + 1) * scale, 'height': ih * scale, 'path': italic_path}
-        fonts['Bold'][char] = {'width': (bw + 1) * scale, 'height': bh * scale, 'path': bold_path}
-        fonts['BoldItalic'][char] = {'width': (biw + 1) * scale, 'height': bih * scale, 'path': bold_italic_path}
+        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, italic_offset, italic=True)
+        add_width = 8 / height
+        fonts['Regular'][char] = {'width': (w + add_width) * scale, 'height': h * scale, 'path': path}
+        fonts['Italic'][char] = {'width': (iw + add_width) * scale, 'height': ih * scale, 'path': italic_path}
+        fonts['Bold'][char] = {'width': (bw + add_width) * scale, 'height': bh * scale, 'path': bold_path}
+        fonts['BoldItalic'][char] = {'width': (biw + add_width) * scale, 'height': bih * scale, 'path': bold_italic_path}
     missing = PIL.Image.new('RGBA', (5, 8))
     missing_px = missing.load()
     for y in range(missing.height):
@@ -337,7 +339,7 @@ def collinear(p1: tuple[int, int], p2: tuple[int, int], p3: tuple[int, int]) -> 
     x2, y2 = p3[0] - p1[0], p3[1] - p1[1]
     return abs(x1 * y2 - x2 * y1) < 1e-12
 
-def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[int, int], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, tuple[int, int]]:
+def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[float, float], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, tuple[int, int]]:
     ox, oy = offset
     pen = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     pen_pos: dict[str, tuple[int, int] | None] = {'current': None, 'next': None}
@@ -347,7 +349,7 @@ def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[int, int], ita
             x += ox
             y += oy
             if italic:
-                x += (glyph.height / 2 - y) / 4
+                x += (glyph.height - y) / 4
             pen.lineTo((x * scale, (glyph.height - y) * scale))
             pen_pos['current'] = pen_pos['next']
             pen_pos['next'] = None
@@ -359,7 +361,7 @@ def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[int, int], ita
         x += ox
         y += oy
         if italic:
-            x += (glyph.height / 2 - y) / 4
+            x += (glyph.height - y) / 4
         pen.moveTo((x * scale, (glyph.height - y) * scale))
     def line_pen(point: tuple[int, int]):
         if pen_pos['next'] is not None and not collinear(pen_pos['current'], pen_pos['next'], point):
