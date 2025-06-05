@@ -170,10 +170,10 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
                     add_bitmap_glyph(char, glyph, height, ascent)
     for style, data in fonts.items():
         full_name = 'Minecraft ' + name
-        short_name = full_name.replace(' ', '')
+        ttf_name = full_name.replace(' ', '') + '-' + style.replace(' ', '')
         font = make_font(full_name, style, font_em, (created_date, modified_date), empty_path, data, aglfn)
         os.makedirs('out', exist_ok=True)
-        font.save(f'out/{short_name}-{style}.ttf')
+        font.save(f'out/{ttf_name}.ttf')
 
 def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetime, datetime.datetime], empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     nameStrings = dict(
