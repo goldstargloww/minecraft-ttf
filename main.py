@@ -114,7 +114,7 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
     path.closePath()
     empty_path = path.glyph()
     seen_chars = set()
-    fonts = {'Regular': {}, 'Bold': {}, 'Italic': {}, 'BoldItalic': {}}
+    fonts = {'Regular': {}, 'Bold': {}, 'Italic': {}, 'Bold Italic': {}}
     chatbox_height = 12
     font_em = 1200
     pixel_scale = font_em / chatbox_height
@@ -134,7 +134,7 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
         fonts['Regular'][char] = {'width': (w + add_width) * scale, 'height': h * scale, 'path': path}
         fonts['Italic'][char] = {'width': (iw + add_width) * scale, 'height': ih * scale, 'path': italic_path}
         fonts['Bold'][char] = {'width': (bw + add_width) * scale, 'height': bh * scale, 'path': bold_path}
-        fonts['BoldItalic'][char] = {'width': (biw + add_width) * scale, 'height': bih * scale, 'path': bold_italic_path}
+        fonts['Bold Italic'][char] = {'width': (biw + add_width) * scale, 'height': bih * scale, 'path': bold_italic_path}
     missing = PIL.Image.new('RGBA', (5, 8))
     missing_px = missing.load()
     for y in range(missing.height):
@@ -151,7 +151,7 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
                 fonts['Regular'][char] = {'width': width * pixel_scale, 'height': 0, 'path': empty_path}
                 fonts['Italic'][char] = {'width': width * pixel_scale, 'height': 0, 'path': empty_path}
                 fonts['Bold'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
-                fonts['BoldItalic'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
+                fonts['Bold Italic'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
         elif provider['type'] == 'bitmap':
             (img, date) = read_image(jar, provider['file'])
             if date > modified_date:
@@ -180,10 +180,10 @@ def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetim
         copyright = 'Copyright (c) 2009 Mojang AB',
         familyName = name,
         styleName = style,
-        uniqueFontIdentifier = name.replace(' ', '') + '.' + style,
+        uniqueFontIdentifier = name.replace(' ', '') + '.' + style.replace(' ', ''),
         fullName = name + ' ' + style,
         version = 'Version 1.000',
-        psName = name.replace(' ','') + style,
+        psName = name.replace(' ','') + style.replace(' ', ''),
         sampleText = 'and the universe said I love you'
     )
     defined_glyphs = ['.notdef', '.null']
