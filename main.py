@@ -109,38 +109,35 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
             del providers[index]
             providers[index:index] = reference['providers']
         index += 1
-    path = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
-    path.moveTo((0, 0))
-    path.closePath()
-    empty_path = path.glyph()
     seen_chars = set()
     fonts = {'Regular': {}, 'Bold': {}, 'Italic': {}, 'Bold Italic': {}}
     chatbox_height = 12
     font_em = 1200
     pixel_scale = font_em / chatbox_height
-    def add_bitmap_glyph(char: str, glyph: PIL.Image.Image, height: int, ascent: int):
+    def add_bitmap_glyph(char: str, mask: pygame.mask.Mask, height: int, ascent: int):
+        m_width, m_height = mask.get_size()
         seen_chars.add(char)
-        bold_glyph = PIL.Image.new('RGBA', (glyph.width + 1, glyph.height))
-        bold_glyph.paste(glyph, (0, 0), glyph)
-        bold_glyph.paste(glyph, (1, 0), glyph)
-        scale = height / glyph.height * pixel_scale
-        offset = (0, (height - ascent) / height * glyph.height)
-        italic_offset = (-6 / height, (height - ascent) / height * glyph.height)
-        (path, (w, h)) = vectorize(glyph, scale, offset)
-        (italic_path, (iw, ih)) = vectorize(glyph, scale, italic_offset, italic=True)
-        (bold_path, (bw, bh)) = vectorize(bold_glyph, scale, offset)
-        (bold_italic_path, (biw, bih)) = vectorize(bold_glyph, scale, italic_offset, italic=True)
-        add_width = glyph.height / height
+        bold_mask = pygame.mask.Mask((m_width + 1, m_height), fill=False)
+        bold_mask.draw(mask, (0, 0))
+        bold_mask.draw(mask, (1, 0))
+        scale = height / m_height * pixel_scale
+        offset = (0, (height - ascent) / height * m_height)
+        italic_offset = (-6 / height, (height - ascent) / height * m_height)
+        (path, (w, h)) = vectorize(mask, scale, offset)
+        (italic_path, (iw, ih)) = vectorize(mask, scale, italic_offset, italic=True)
+        (bold_path, (bw, bh)) = vectorize(bold_mask, scale, offset)
+        (bold_italic_path, (biw, bih)) = vectorize(bold_mask, scale, italic_offset, italic=True)
+        add_width = m_height / height
         fonts['Regular'][char] = {'width': (w + add_width) * scale, 'height': h * scale, 'path': path}
         fonts['Italic'][char] = {'width': (iw + add_width) * scale, 'height': ih * scale, 'path': italic_path}
         fonts['Bold'][char] = {'width': (bw + add_width) * scale, 'height': bh * scale, 'path': bold_path}
         fonts['Bold Italic'][char] = {'width': (biw + add_width) * scale, 'height': bih * scale, 'path': bold_italic_path}
-    missing = PIL.Image.new('RGBA', (5, 8))
-    missing_px = missing.load()
-    for y in range(missing.height):
-        for x in range(missing.width):
-            if x == 0 or y == 0 or x == missing.width - 1 or y == missing.height - 1:
-                missing_px[x, y] = (255, 255, 255, 255)
+    mw, mh = (5, 8)
+    missing = pygame.mask.Mask((mw, mh), fill=False)
+    for y in range(mh):
+        for x in range(mw):
+            if x == 0 or y == 0 or x == mw - 1 or y == mh - 1:
+                missing.set_at((x, y), 1)
     add_bitmap_glyph('.notdef', missing, 8, 8)
     for provider in providers:
         if provider['type'] == 'space':
@@ -148,10 +145,10 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
                 if char in seen_chars:
                     continue
                 seen_chars.add(char)
-                fonts['Regular'][char] = {'width': width * pixel_scale, 'height': 0, 'path': empty_path}
-                fonts['Italic'][char] = {'width': width * pixel_scale, 'height': 0, 'path': empty_path}
-                fonts['Bold'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
-                fonts['Bold Italic'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': empty_path}
+                fonts['Regular'][char] = {'width': width * pixel_scale, 'height': 0, 'path': None}
+                fonts['Italic'][char] = {'width': width * pixel_scale, 'height': 0, 'path': None}
+                fonts['Bold'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': None}
+                fonts['Bold Italic'][char] = {'width': (width + 1) * pixel_scale, 'height': 0, 'path': None}
         elif provider['type'] == 'bitmap':
             (img, date) = read_image(jar, provider['file'])
             if date > modified_date:
@@ -167,15 +164,17 @@ def convert_font(name: str, entry: str, jar: zipfile.ZipFile, created_date: date
                     if char in seen_chars:
                         continue
                     glyph = img.crop((x * glyph_width, y * glyph_height, (x + 1) * glyph_width, (y + 1) * glyph_height)).convert('RGBA')
-                    add_bitmap_glyph(char, glyph, height, ascent)
+                    surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
+                    mask = pygame.mask.from_surface(surface)
+                    add_bitmap_glyph(char, mask, height, ascent)
     for style, data in fonts.items():
         full_name = 'Minecraft ' + name
         ttf_name = full_name.replace(' ', '') + '-' + style.replace(' ', '')
-        font = make_font(full_name, style, font_em, (created_date, modified_date), empty_path, data, aglfn)
+        font = make_font(full_name, style, font_em, (created_date, modified_date), data, aglfn)
         os.makedirs('out', exist_ok=True)
         font.save(f'out/{ttf_name}.ttf')
 
-def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetime, datetime.datetime], empty_path: fontTools.ttLib.tables._g_l_y_f.Glyph, char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
+def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetime, datetime.datetime], char_data: dict, aglfn: dict[str, str]) -> fontTools.fontBuilder.FontBuilder:
     nameStrings = dict(
         copyright = 'Copyright (c) 2009 Mojang AB',
         familyName = name,
@@ -186,10 +185,11 @@ def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetim
         psName = name.replace(' ','') + style.replace(' ', ''),
         sampleText = 'and the universe said I love you'
     )
+    empty_glyph = fontTools.ttLib.tables._g_l_y_f.Glyph()
     defined_glyphs = ['.notdef', '.null']
     codepoints = {}
     char_widths = {'.notdef': 0, '.null': 0}
-    char_paths = {'.notdef': empty_path, '.null': empty_path}
+    char_paths = {'.notdef': empty_glyph, '.null': empty_glyph}
     for char, data in char_data.items():
         if char not in ('.notdef', '.null'):
             char_name = aglfn.get(char, 'uni' + format(ord(char), '04x'))
@@ -198,7 +198,10 @@ def make_font(name: str, style: str, font_em: int, dates: tuple[datetime.datetim
         else:
             char_name = char
         char_widths[char_name] = data['width']
-        char_paths[char_name] = data['path']
+        if data['path'] is not None:
+            char_paths[char_name] = data['path']
+        else:
+            char_paths[char_name] = empty_glyph
     widest = max(map(lambda x: x['width'], char_data.values()))
     tallest = max(map(lambda x: x['height'], char_data.values()))
     font = fontTools.fontBuilder.FontBuilder(unitsPerEm=font_em, isTTF=True)
@@ -339,18 +342,19 @@ def collinear(p1: tuple[int, int], p2: tuple[int, int], p3: tuple[int, int]) -> 
     x2, y2 = p3[0] - p1[0], p3[1] - p1[1]
     return abs(x1 * y2 - x2 * y1) < 1e-12
 
-def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[float, float], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph, tuple[int, int]]:
+def vectorize(mask: pygame.mask.Mask, scale: float, offset: tuple[float, float], italic: bool=False) -> tuple[fontTools.ttLib.tables._g_l_y_f.Glyph | None, tuple[int, int]]:
     ox, oy = offset
     pen = fontTools.pens.ttGlyphPen.TTGlyphPen(None)
     pen_pos: dict[str, tuple[int, int] | None] = {'current': None, 'next': None}
+    width, height = mask.get_size()
     def draw_last():
         if pen_pos['next'] is not None:
             x, y = pen_pos['next']
             x += ox
             y += oy
             if italic:
-                x += (glyph.height - y) / 4
-            pen.lineTo((x * scale, (glyph.height - y) * scale))
+                x += (height - y) / 4
+            pen.lineTo((x * scale, (height - y) * scale))
             pen_pos['current'] = pen_pos['next']
             pen_pos['next'] = None
     def move_pen(point: tuple[int, int]):
@@ -361,20 +365,15 @@ def vectorize(glyph: PIL.Image.Image, scale: float, offset: tuple[float, float],
         x += ox
         y += oy
         if italic:
-            x += (glyph.height - y) / 4
-        pen.moveTo((x * scale, (glyph.height - y) * scale))
+            x += (height - y) / 4
+        pen.moveTo((x * scale, (height - y) * scale))
     def line_pen(point: tuple[int, int]):
         if pen_pos['next'] is not None and not collinear(pen_pos['current'], pen_pos['next'], point):
             draw_last()
         pen_pos['next'] = point
-    glyph = glyph.convert('RGBA')
-    surface = pygame.image.fromstring(glyph.tobytes(), glyph.size, 'RGBA')
-    mask = pygame.mask.from_surface(surface)
     filled, empty = separate_regions(mask)
     if len(filled) == 0:
-        move_pen((0, 0))
-        pen.closePath()
-        size = (0, 0)
+        return (None, (0, 0))
     else:
         rects = mask.get_bounding_rects()
         size = (max(map(lambda x: x.right, rects)), max(map(lambda x: x.top, rects)))
