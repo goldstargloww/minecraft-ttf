@@ -16,6 +16,7 @@ import fontTools.ttLib.tables._g_l_y_f
 def main():
     name = sys.argv[1] if len(sys.argv) >= 2 else None
     version = get_version(name)
+    name = version['id']
     meta_url = version['url']
     date = datetime.datetime.fromisoformat(version['releaseTime'])
     if date < datetime.datetime.fromisoformat('2018-07-10T14:21:42+00:00'):
